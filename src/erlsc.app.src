@@ -1,0 +1,11 @@
+%% -*- mode: erlang;erlang-indent-level: 2;indent-tabs-mode: nil -*-
+{application, erlsc,
+ [ {description, ""}
+ , {vsn, "1"}
+ , {registered, []}
+ , {applications, [ kernel
+                  , stdlib
+                  ]}
+ , {mod, {erlsc, []}}
+ ]}.
+
