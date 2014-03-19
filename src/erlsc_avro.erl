@@ -302,7 +302,8 @@ def(#t{def = tuple})                 -> record;
 def(#t{def = union})                 -> union;
 def(#t{def = enum})                  -> enum;
 def(#t{def = L}) when ?IS_LIST(L)    -> array;
-def(#t{def = range, args = {Min, Max}}) ->
+def(#t{def = range, args = Args}) ->
+  {Min, Max} = erlsc_types:range(Args),
   case Min >= ?INT_MIN andalso Max =< ?INT_MAX of
     true  -> long;
     false -> string

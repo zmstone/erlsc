@@ -8,6 +8,7 @@
         , consult_file/1
         , is_instance/2
         , is_null/1
+        , range/1
         , scan/2
         , write_to_file/2
         ]).
@@ -62,9 +63,10 @@ is_instance(X, #t{ def  = tuple
   ( is_tuple(X) andalso
     size(X) =:= length(SubTypes)
   ) orelse {tuple, length(SubTypes)};
-is_instance(X, #t{def = range, args = {Min, Max}}) ->
+is_instance(X, #t{def = range, args = Args}) ->
+  {Min, Max} = range(Args),
   ( X >= Min andalso X =< Max
-  ) orelse {range, {Min, Max}};
+  ) orelse {range, Args};
 is_instance(X, #t{def = enum, args = Symbols}) ->
   ( is_atom(X) andalso lists:member(X, Symbols)
   ) orelse {enum, Symbols};
@@ -109,6 +111,10 @@ scan(Line, String) ->
   RawTypes = filter_type_spec_forms([Form]),
   [Type] = compile_forms(?MODULE, RawTypes),
   Type.
+
+%% @doc Get range type extra arguments.
+range(int64)      -> {?INT_MIN, ?INT_MAX};
+range({Min, Max}) -> {Min, Max}.
 
 %%%_* Internals ================================================================
 
@@ -317,7 +323,7 @@ rec_field_name({record_field,_,{atom,_,N},_}) -> N.
 %% @private Get extra arguments for type definitions.
 args(_Mod, _Line, range, Range) ->
   [Min, Max] = Range,
-  {arg_int(Min), arg_int(Max)};
+  arg_int(Min, Max);
 args(Mod, Line, enum, UnionRaw) ->
   length(UnionRaw) > 1 andalso excep({Mod, Line}, "bad arity in enum"),
   case enum_elements(tree(Mod, hd(UnionRaw))) of
@@ -326,6 +332,14 @@ args(Mod, Line, enum, UnionRaw) ->
   end;
 args(_Mod, _Line, _, _) ->
   [].
+
+%% @private To make range args compact.
+-spec arg_int(form(), form()) -> atom() | {integer(), integer()}.
+arg_int(Min, Max) ->
+  case {arg_int(Min), arg_int(Max)} of
+    {?INT_MIN, ?INT_MAX} -> int64;
+    Range                -> Range
+  end.
 
 %% @private Get integer value out of range spec definition.
 -spec arg_int(form()) -> integer().
@@ -425,7 +439,7 @@ r(ID, Ref) -> #t{ id  = ID
 
 range_type_test() ->
   Root = {erlsc, int64, 0},
-  ?EQ(t(Root, range, [], {?INT_MIN, ?INT_MAX}), find(erlsc, Root)).
+  ?EQ(t(Root, range, [], int64), find(erlsc, Root)).
 
 forward_reference_test() ->
   Root = {?SAMPLE, person, 0},
