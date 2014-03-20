@@ -103,9 +103,6 @@
 %% type info in data error reason
 -type type_info()   :: def() | {def(), term()}.
 
-%% data extraction relative (without root) path
--type path() :: [type_id()].
-
 %% type definition extracted from eralng variable type specs
 -record( t
        , { %% record field name or tuple/union element index
@@ -116,8 +113,6 @@
          , ref  = [] :: root_id() | [root_id()]
            %% extra arguments of type definition, e.g. min max of a range type
          , args = [] :: any()
-           %% path in a complex type
-         , path = [] :: path()
            %% deeper layer type definitions, valid when it's not primitive
          , subs = [] :: [type()]
          }
@@ -135,6 +130,9 @@
 -type proplist() :: [{atom(), term()}].
 
 -type encode_opt() :: json | binary.
+
+-type encoder() :: fun((root_id(), term(), [encode_opt()]) ->
+                          {TypeName::binary(), Data::binary()}).
 
 -endif.
 

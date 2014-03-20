@@ -7,15 +7,12 @@
 %%   * no avro Fixed type support
 %%   * no default value support
 %%   * record field names in Erlang spec should contain [A-Za-z0-9_] only
-%%     e.g. {mod, record, rec} -> "mod_record_rec"
-%%          {mod, mytype, 0}   -> "mod_mytype_0"
 
 -module(erlsc_avro).
 
--export([ encode/5
-        , is_named_type/1
-        , pretty_print/2
-        , get_def/1
+-export([ avro_customize/1
+        , encode/5
+        , pp_schema/2
         ]).
 
 -include("erlsc_private.hrl").
@@ -24,23 +21,21 @@
 
 %%%_* API ======================================================================
 
-%% @doc Is named type
-is_named_type(T) -> is_named(def(T)).
-
-pretty_print(Specs, Types) ->
+%% @doc Pretty print avro schema.
+pp_schema(Specs, Types) ->
   OutputDir = keyfind(output_dir, Specs),
   Namespace = keyfind(namespace, Specs, ""),
   filelib:ensure_dir(filename:join(OutputDir, "foo")),
   lists:foreach(fun(Type) ->
-                  pretty_print(OutputDir, Namespace, Type)
+                  pp_schema(OutputDir, Namespace, Type)
                 end, Types).
 
-encode(Ns, Cache, Type, Data, Options) ->
+%% @doc Encode Erlang term into either JSON objct or avro binary.
+encode(Ns, Cache, #t{id = ID} = Type, Data, Options) ->
   case lists:member(json, Options) of
     true ->
-      iolist_to_binary(
-        mochijson3:encode(
-          encode_json(Ns, Ns, Cache, Type, Data)));
+      Json = mochijson3:encode(encode_json(Ns, Ns, Cache, Type, Data)),
+      {bin(ns(Ns, ID)), bin(Json)};
     false ->
       case lists:member(binary, Options) of
         true  -> encode_binary(Ns, Cache, Type, Data);
@@ -48,8 +43,140 @@ encode(Ns, Cache, Type, Data, Options) ->
       end
   end.
 
-%%%_* Internals ================================================================
+%% @doc Convert into avro specific layout.
+%% 1. compact references, see compact_refs/3
+%% 2. resolve ambiguous unions, see resolve_unions/1
+%% @end
+avro_customize(Cache) ->
+  resolve_unions(compact_refs( erlsc_cache:to_list(Cache), Cache, [])).
 
+%%%_* Compact references =======================================================
+
+%% @private Shorten the reference chain, filter out indirect references.
+%% e.g. -type spec_a() :: spec_b()
+%%      -type spec_b() :: #some_rec{}.
+%% spec_b here is an indirect reference to type #some_rec{}, such references
+%% can be ignored in the final schema representation.
+%% @end
+compact_refs([], _ResCache, Acc) ->
+  %% completed
+  Acc;
+compact_refs([Type | Types], ResCache, Acc) ->
+  %% look into sub references
+  case is_named_avro_type(Type) of
+    true ->
+      NewType = compact_sub_refs(Type, ResCache),
+      compact_refs(Types, ResCache, [NewType | Acc]);
+    false ->
+      compact_refs(Types, ResCache, Acc)
+  end.
+
+compact_sub_refs(#t{def = [], ref = Ref} = T0, ResCache) ->
+  T1 = erlsc_cache:find(ResCache, Ref),
+  T = case is_named_avro_type(T1) of
+        true -> T0;
+        false ->
+          T2 = compact_sub_refs(T1, ResCache),
+          T2#t{ id  = T0#t.id
+              , ref = add_ref(Ref, T2#t.ref)
+              }
+      end,
+  filter_refs(T);
+compact_sub_refs(#t{subs = Subs} = Type, ResCache) ->
+  F = fun(T) -> compact_sub_refs(T, ResCache) end,
+  Type#t{subs = lists:map(F, Subs)}.
+
+is_named_avro_type(#t{def = []}) -> false;
+is_named_avro_type(T)            -> is_named(def(T)).
+
+%% @private Concatenate references as list.
+add_ref(Ref, Refs) when is_list(Refs) -> [Ref | Refs];
+add_ref(Ref, Ref2)                    -> add_ref(Ref, [Ref2]).
+
+%% @private Keep only transform references and the last in the list
+%% as that one would be needed to format avro type name.
+%% @end
+filter_refs(#t{def = [], ref = Refs} = T) ->
+  {Last, RestRefs} = take_last_ref(Refs),
+  T#t{ref = filter_refs_list(RestRefs) ++ [Last]};
+filter_refs(#t{ref = Refs} = T) ->
+  T#t{ref = filter_refs_list(Refs)}.
+
+%% @private Take the last reference in the list.
+take_last_ref(Ref) when is_tuple(Ref) ->
+  {Ref, []};
+take_last_ref(Refs) when is_list(Refs) ->
+  ReversedRefs = lists:reverse(Refs),
+  {hd(ReversedRefs), lists:reverse(tl(ReversedRefs))}.
+
+%% @private Discard all the intermediate nonsense type references.
+filter_refs_list(Ref) when is_tuple(Ref) ->
+  filter_refs_list([Ref]);
+filter_refs_list(Refs) when is_list(Refs) ->
+  lists:filter(fun({_, _, Arity}) -> Arity =/= 0 end, Refs).
+
+%%%_* Resolve avro unions ======================================================
+
+%% @private Union members of atom() and string() are actually mapped to
+%% the same avro type 'string'. This function is to resolve the duplications.
+%% @end
+resolve_unions(Types) ->
+  lists:map(fun resolve_unions_/1, Types).
+
+resolve_unions_(#t{def = union, subs = Subs} = T) ->
+  NewSubs = resolve_unions(Subs),
+  case resolve_union(NewSubs) of
+    [#t{} = NewT] -> NewT#t{id = T#t.id};
+    NewSubs_      -> T#t{subs = NewSubs_}
+  end;
+resolve_unions_(#t{subs = Subs} = T) ->
+  T#t{subs = resolve_unions(Subs)}.
+
+%% @private Resolve string union, in the union members, there should be
+%% no type duplication.
+%% @end
+resolve_union(Types) ->
+  Suspects = [null, long, string],
+  lists:foldl(fun(Suspect, Types_) ->
+                resolve_union(Types_, Suspect)
+              end, Types, Suspects).
+
+resolve_union(Types, AvroDef) ->
+  resolve_union(Types, AvroDef, [], false).
+
+resolve_union([], _AvroDef, Acc, _Found) ->
+  lists:reverse(Acc);
+resolve_union([H | T], AvroDef, Acc, Found) ->
+  case get_def(H) of
+    {primitive, AvroDef} when Found =:= true ->
+      %% already found, skip.  we may lose #t.args here
+      %% e.g. the Erlang union "-type some_type() :: unknown | integer()." is
+      %%      resolved into 'string' type in avro, thus we lose the ability to
+      %%      validate the input data by checking I == unknown or is_integer(I)
+      assert_no_tx(H),
+      resolve_union(T, AvroDef, Acc, Found);
+    {primitive, string} ->
+      %% found string, loop with Found = true
+      assert_no_tx(H),
+      resolve_union(T, AvroDef, [H#t{def = string} | Acc], true);
+    {primitive, AvroDef} ->
+      %% found <type>, loop with Found = true
+      assert_no_tx(H),
+      resolve_union(T, AvroDef, [H | Acc], true);
+    _ ->
+      %% not found, loop with new Acc
+      resolve_union(T, AvroDef, [H | Acc], Found)
+  end.
+
+%% @private An Erlang union of integer() and string() would end up only 'string'
+%% type in avro, if any of the Erlang union member is a transform result, it
+%% would be impossible to resolve.
+assert_no_tx(#t{ref = []}) -> ok;
+assert_no_tx(T) -> throw({no_transform_allowed_in_ambiguous_union, T}).
+
+%%%_* Enocde JSON ==============================================================
+
+%% @private Encode Erlang term into JSON objects.
 encode_json(Ns, FullName, Cache, #t{id = ID, ref = Refs} = Type, Data) ->
   NewData = tx(Refs, Data),
   case is_instance(Type, NewData) of
@@ -86,10 +213,9 @@ encode_complex_json(record, Ns, FullName, Cache, T, Data) ->
 encode_complex_json(union, Ns, FullName, Cache, #t{subs = Subs}, Data) ->
   Fun = fun(T) ->
           Json = encode_json(Ns, FullName, Cache, T, Data),
-          Name = get_avro_type_name(Cache, T, Ns, FullName),
-          case Name of
+          case get_avro_type_name(T, Ns, FullName) of
             null -> null;
-            _    -> {struct, [{Name, Json}]}
+            Name -> {struct, [{Name, Json}]}
           end
         end,
   case try_each_take_first(Fun, Subs) of
@@ -97,6 +223,7 @@ encode_complex_json(union, Ns, FullName, Cache, #t{subs = Subs}, Data) ->
     error        -> throw({bad_data, FullName, Subs, Data})
   end.
 
+%% @private Try each funcion ignore exception ones until the first success.
 try_each_take_first(_Fun, []) ->
   error;
 try_each_take_first(Fun, [H | T]) ->
@@ -106,144 +233,142 @@ try_each_take_first(Fun, [H | T]) ->
     try_each_take_first(Fun, T)
   end.
 
-get_avro_type_name(Cache, #t{} = Type, Ns, FullName) ->
+get_avro_type_name(#t{} = Type, Ns, FullName) ->
   case get_def(Type) of
     {primitive, Def}    -> Def;      %% primitive type name
     {complex, _AvroDef} -> FullName; %% complex type name
-    {reference, Ref}    ->
-      RefType = erlsc_cache:find(Cache, Ref),
-      get_avro_type_name(Cache, RefType, Ns, ns(Ns, Ref))
+    {reference, Ref}    -> ns(Ns, Ref)
   end.
 
 encode_primitive_json(null, _)    -> null;
 encode_primitive_json(boolean, B) -> B;
 encode_primitive_json(double, D)  -> D;
 encode_primitive_json(long, L)    -> L;
-encode_primitive_json(string, S)  -> {json, quote(S)}.
+encode_primitive_json(string, S)  -> bin(S).
 
-quote(I) when is_integer(I) -> quote(integer_to_list(I));
-quote(A) when is_atom(A)    -> quote(atom_to_list(A));
-quote(S)                    -> bin([$", escape(S), $"]).
+%% @private Check if data is an instance of given type.
+is_instance(#t{def = []}, _Data) ->
+  true;
+is_instance(#t{def = string}, X) ->
+  is_atom(X) orelse
+  is_list(X) orelse
+  is_binary(X) orelse
+  is_integer(X) orelse string;
+is_instance(Type, Data) ->
+  erlsc_types:is_instance(Data, Type).
 
-escape([])       -> [];
-escape([$" | S]) -> [$\\, $" | escape(S)];
-escape([H | S])  -> [H | escape(S)].
-
-is_instance(#t{def = []}, _Data) -> true;
-is_instance(#t{def = string}, X) -> is_atom(X)    orelse
-                                    is_list(X)    orelse
-                                    is_binary(X)  orelse
-                                    is_integer(X) orelse
-                                    {bad_data, string, X};
-is_instance(Type, Data)          -> erlsc_types:is_instance(Data, Type).
+%%%_* Enocde binary ============================================================
 
 encode_binary(_Ns, _Cache, _Type, _Data) ->
   ok.
 
-tx([], Data)                     -> Data;
-tx([{Mod, Fun, 1} | Rest], Data) -> tx(Rest, Mod:Fun(Data));
-tx([_Ref | Rest], Data)          -> tx(Rest, Data).
+%%%_* Enocde binary ============================================================
 
 %% @private Pretty print a type to JSON object and write it to .avsc file.
-pretty_print(OutputDir, Namespace, #t{id = ID} = Type) ->
+pp_schema(OutputDir, Ns, #t{id = ID} = Type) ->
   Filename = filename:join(OutputDir, root_id_to_filename(ID)),
-  JSON = pp(Type, Namespace),
-  ok = file:write_file(Filename, JSON).
+  PropList = to_propl(Type, Ns, Ns),
+  JSON     = pp_schema_json(_Indent = "", PropList),
+  ok       = file:write_file(Filename, JSON).
 
-%% @private Pretty print a type to JSON object.
-pp(Type, Ns) ->
-  PropList = pp_type(Type, Ns, Ns),
-  pp_json(_Indent = "", PropList).
-
-pp_type(#t{} = Type, FullName, Ns) ->
+to_propl(#t{} = Type, FullName, Ns) ->
   case get_def(Type) of
     {reference, Ref} ->
-      fmt([Ns, ".", id_to_name(Ref)]);
+      json_str(ns(Ns, Ref));
     {primitive, Def} ->
-      fmt(Def);
+      json_str(Def);
     {complex, Def} ->
       try
-        pp_complex(Def, Type, FullName, Ns)
+        complex_to_propl(Def, Type, FullName, Ns)
       catch throw : {bad_avro_name, BadID} ->
         throw({incompatible_avro_name, {Type, BadID}})
       end
   end.
 
-pp_complex(Def, #t{id = ID} = Type, FullName, Ns) ->
+complex_to_propl(Def, #t{id = ID} = Type, FullName, Ns) ->
   NewFullName = ns(FullName, ID),
   case Def of
-    array  -> pp_array(Type, NewFullName, Ns);
-    enum   -> pp_enum(Type, NewFullName);
-    record -> pp_record(Type, NewFullName, Ns);
-    union  -> pp_union(Type, NewFullName, Ns)
+    array  -> array_to_propl(Type, NewFullName, Ns);
+    enum   -> enum_to_propl(Type, NewFullName);
+    record -> record_to_propl(Type, NewFullName, Ns);
+    union  -> union_to_propl(Type, NewFullName, Ns)
   end.
 
-pp_array(#t{subs = [ElemType]}, FullName, Ns) ->
+array_to_propl(#t{subs = [ElemType]}, FullName, Ns) ->
   [ {type, array}
-  , {items, pp_type(ElemType, FullName, Ns)}
+  , {items, to_propl(ElemType, FullName, Ns)}
   ].
 
-pp_enum(#t{args = Symbols}, FullName) ->
-  [ {name, fmt(FullName)}
+enum_to_propl(#t{args = Symbols}, FullName) ->
+  [ {name, json_str(FullName)}
   , {type, enum}
   , {symbols, bin([ "["
-                  , infix([fmt(A) || A <- Symbols], ",")
+                  , infix([json_str(A) || A <- Symbols], ",")
                   , "]"])}
   ].
 
-pp_record(#t{subs = Fields}, FullName, Ns) ->
-  [ {name, fmt(FullName)}
+record_to_propl(#t{subs = Fields}, FullName, Ns) ->
+  [ {name, json_str(FullName)}
   , {type, record}
-  , {fields, [pp_record_field(Field, FullName, Ns) || Field <- Fields]}
+  , {fields, [record_field_to_propl(Field, FullName, Ns) || Field <- Fields]}
   ].
 
-pp_record_field(#t{id = ID} = Type, FullName, Ns) ->
+record_field_to_propl(#t{id = ID} = Type, FullName, Ns) ->
   [ {name, ID}
-  , {type, pp_type(Type, FullName, Ns)}
+  , {type, to_propl(Type, FullName, Ns)}
   ].
 
-pp_union(#t{subs = Members}, FullName, Ns) ->
-  [pp_type(Member, FullName, Ns) || Member <- lists:sort(Members)].
+union_to_propl(#t{subs = Members}, FullName, Ns) ->
+  [to_propl(Member, FullName, Ns) || Member <- lists:sort(Members)].
 
-pp_json(Indent, Value) when is_binary(Value) ->
+pp_schema_json(Indent, Value) when is_binary(Value) ->
   [Indent, Value];
-pp_json(Indent, [H | _] = TaggedValues) when is_tuple(H) ->
+pp_schema_json(Indent, [H | _] = TaggedValues) when is_tuple(H) ->
   NewIndent = Indent ++ indent(),
   [ [Indent, "{\n"]
   , infix([ [ NewIndent
-            , [ fmt(Tag), ":"
+            , [ json_str(Tag), ":"
               , case is_list(Value) of
-                  true  -> ["\n", pp_json(NewIndent, Value)];
-                  false -> [" ", fmt(Value)]
+                  true  -> ["\n", pp_schema_json(NewIndent, Value)];
+                  false -> [" ", json_str(Value)]
                 end
               ]
             ] || {Tag, Value} <- TaggedValues
           ], ",\n"), "\n"
   , [Indent, "}"]
   ];
-pp_json(Indent, [H | _] = Union) when is_list(H);
-                                      is_binary(H) ->
+pp_schema_json(Indent, [H | _] = Union) when is_list(H);
+                                             is_binary(H) ->
   [ [Indent, "[\n"]
-  , infix([ pp_json(Indent ++ indent(), Member)
+  , infix([ pp_schema_json(Indent ++ indent(), Member)
           || Member <- Union], ",\n"), "\n"
   , [Indent, "]"]
   ].
 
-fmt(A) when is_atom(A)   -> fmt(atom_to_list(A));
-fmt(S) when is_list(S)   -> list_to_binary(["\"", S, "\""]);
-fmt(B) when is_binary(B) -> B.
+%% @private Quote json string, use binary as an indicator of already
+%% quoted string. Since we are formating avro schema here, all the strings
+%% are from erlang specs, here we assume it's always either atom or string
+%% which is all latin letters without any punctuation (well, except for '.')
+%% @end
+json_str(A) when is_atom(A)   -> json_str(atom_to_list(A));
+json_str(S) when is_list(S)   -> bin(["\"", S, "\""]);
+json_str(B) when is_binary(B) -> B. %% already quoted
 
+%% @private Make a white space padding string as indentation.
 indent() -> lists:duplicate(?INDENT_WIDTH, $\s).
 
-bin(IoList) -> iolist_to_binary(IoList).
-
+%% @private Infix string list.
 infix([], _Sep)     -> [];
 infix([H], _Sep)    -> [H];
 infix([H | T], Sep) -> [H, Sep | infix(T, Sep)].
 
+%%%_* Common help functions ====================================================
+
+%% @private Make new namespace.
 -spec ns(namespace(), type_id()) -> namespace().
 ns(Namespace, ID) -> string:join([Namespace, id_to_name(ID)], ".").
 
+%% @private Get avro definition.
 -spec get_def(type()) -> {reference, root_id()}        |
                          {primitive, avro_primitive()} |
                          {complex, avro_complex()}.
@@ -261,23 +386,6 @@ get_def(#t{} = T) ->
       true = is_complex(AvroDef), %% assert
       {complex, AvroDef}
   end.
-
-is_named(enum)   -> true;
-is_named(record) -> true;
-is_named(_)      -> false.
-
-is_primitive(boolean) -> true;
-is_primitive(double)  -> true;
-is_primitive(long)    -> true;
-is_primitive(null)    -> true;
-is_primitive(string)  -> true;
-is_primitive(_)       -> false.
-
-is_complex(array)  -> true;
-is_complex(enum)   -> true;
-is_complex(record) -> true;
-is_complex(union)  -> true;
-is_complex(_)      -> false.
 
 %% @private Map to avro type definition.
 -spec def(type()) -> def() | no_return().
@@ -311,6 +419,23 @@ def(#t{def = range, args = Args}) ->
 def(T) ->
   throw({incompatible, T}).
 
+is_named(enum)   -> true;
+is_named(record) -> true;
+is_named(_)      -> false.
+
+is_primitive(boolean) -> true;
+is_primitive(double)  -> true;
+is_primitive(long)    -> true;
+is_primitive(null)    -> true;
+is_primitive(string)  -> true;
+is_primitive(_)       -> false.
+
+is_complex(array)  -> true;
+is_complex(enum)   -> true;
+is_complex(record) -> true;
+is_complex(union)  -> true;
+is_complex(_)      -> false.
+
 keyfind(Key, KVL) ->
   case lists:keyfind(Key, 1, KVL) of
     {_Key, Val} -> Val;
@@ -327,6 +452,7 @@ keyfind(Key, KVL, Default) ->
 root_id_to_filename(Id) ->
   id_to_name(Id) ++ ".avsc".
 
+%% @private Type ID to avro type name.
 id_to_name({Module, record, Name}) when is_atom(Name) ->
   atom_to_list(Module) ++ ".record." ++ atom_to_list(Name);
 id_to_name({Module, Name, Arity}) when is_integer(Arity) ->
@@ -337,6 +463,15 @@ id_to_name(Id) when is_atom(Id) ->
   atom_to_list(Id);
 id_to_name(Id) when is_integer(Id) ->
   "_" ++ integer_to_list(Id).
+
+%% @private Transform data using the transform {M, F, 1} functions in #t.ref.
+tx([], Data)                     -> Data;
+tx([{Mod, Fun, 1} | Rest], Data) -> tx(Rest, Mod:Fun(Data));
+tx([_Ref | Rest], Data)          -> tx(Rest, Data).
+
+bin(A) when is_atom(A)    -> bin(atom_to_list(A));
+bin(I) when is_integer(I) -> bin(integer_to_list(I));
+bin(IoList)               -> iolist_to_binary(IoList).
 
 %%%_* Emacs ====================================================================
 %%% Local Variables:

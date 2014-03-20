@@ -373,7 +373,6 @@ from_proplist({ID, Props}) ->
     , def  = Find(def)
     , ref  = Find(ref)
     , args = Find(args)
-    , path = Find(path)
     , subs = [from_proplist(KVL) || KVL <- Find(subs)]
     }.
 
@@ -383,14 +382,12 @@ to_proplist(#t{ id   = ID
               , def  = Def
               , ref  = Ref
               , args = Args
-              , path = Path
               , subs = Subs
               }) ->
   Props =
     [{def, Def}   || Def  =/= []] ++
     [{ref, Ref}   || Ref  =/= []] ++
     [{args, Args} || Args =/= []] ++
-    [{path, Path} || Path =/= []] ++
     [{subs, [to_proplist(Sub) || Sub <- Subs]} || Subs =/= []],
   {ID, Props}.
 

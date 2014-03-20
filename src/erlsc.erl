@@ -4,7 +4,6 @@
 %% API
 -export(
   [ compile/1
-  , encode/4
   , load/1
   ]).
 
@@ -49,11 +48,11 @@ timestamp({_Mega, _Sec, Micro} = Ts) ->
   {Date, Time} = calendar:now_to_universal_time(Ts),
   {Date, Time, Micro}.
 
-%% @doc Compile Erlang type specs to avro schema and return avro codec context.
-%% Compilation inputs are either defined in a spec file or passed in directly
-%% as a prop-list. See priv/sample.spec for example.
+%% @doc Compile Erlang type specs to avro schema and return data serializer
+%% function. Compilation inputs are either defined in a spec file or passed
+%% in directly as a prop-list. See priv/sample.spec for example.
 %% @end
--spec compile({file, filename()} | proplist()) -> erlsc_codec:ctx().
+-spec compile({file, filename()} | proplist()) -> encoder().
 compile({file, SpecFile}) ->
   Specs = erlsc_specs:consult(SpecFile),
   compile(Specs);
@@ -63,17 +62,12 @@ compile(Specs) when is_list(Specs) ->
 %% @doc For the same purpose as compile/1 only the types are loaded from
 %% the file specified in input spec. See priv/sample.spec for example.
 %% @end
--spec load({file, filename()} | proplist()) -> erlsc_codec:ctx().
+-spec load({file, filename()} | proplist()) -> encoder().
 load({file, SpecFile}) ->
   Specs = erlsc_specs:consult(SpecFile),
   load(Specs);
 load(Specs) when is_list(Specs) ->
   erlsc_codec:load(Specs).
-
--spec encode(erlsc_codec:ctx(), root_id(), term(), [encode_opt()]) ->
-        {ok, iodata()} | no_return().
-encode(Ctx, Root, Data, Options) ->
-  erlsc_codec:encode(Ctx, Root, Data, Options).
 
 %%%_* Internals ================================================================
 
