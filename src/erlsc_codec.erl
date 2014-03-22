@@ -28,9 +28,7 @@ compile(Specs) ->
   ok        = erlsc_types:write_to_file(Filename, Types),
   Namespace = keyfind(namespace, AvscSpecs, ""),
   Cache     = erlsc_cache:from_list(Types),
-  fun(Root, Data, Options) ->
-    encode(Namespace, Cache, Root, Data, Options)
-  end.
+  encoder(Namespace, Cache).
 
 %% @doc Load compiled types from file.
 -spec load(specs()) -> cache().
@@ -41,11 +39,16 @@ load(Specs) ->
   ok        = erlsc_avro:pretty_print(AvscSpecs, Types),
   Namespace = keyfind(namespace, AvscSpecs, ""),
   Cache     = erlsc_cache:from_list(Types),
-  fun(Root, Data, Options) ->
-    encode(Namespace, Cache, Root, Data, Options)
-  end.
+  encoder(Namespace, Cache).
 
 %%%_* Internals ================================================================
+
+-spec encoder(namespace(), cache()) -> encoder().
+encoder(Ns, Cache) ->
+  fun (get, info, ns)       -> Ns;    %% for debug
+      (get, info, cache)    -> Cache; %% for debug
+      (Root, Data, Options) -> encode(Ns, Cache, Root, Data, Options)
+  end.
 
 -spec encode(namespace(), cache(), root_id(), term(), [encode_opt()]) ->
         {binary(), binary()} | no_return().

@@ -125,9 +125,11 @@ resolve_unions(Types) ->
 
 resolve_unions_(#t{def = union, subs = Subs} = T) ->
   NewSubs = resolve_unions(Subs),
-  case resolve_union(NewSubs) of
-    [#t{} = NewT] -> NewT#t{id = T#t.id};
-    NewSubs_      -> T#t{subs = NewSubs_}
+  try resolve_union(NewSubs) of
+      [#t{} = NewT] -> NewT#t{id = T#t.id};
+      NewSubs_      -> T#t{subs = NewSubs_}
+  catch throw : no_transform_allowed_in_ambiguous_union ->
+    throw({no_transform_allowed_in_ambiguous_union, T})
   end;
 resolve_unions_(#t{subs = Subs} = T) ->
   T#t{subs = resolve_unions(Subs)}.
@@ -172,7 +174,7 @@ resolve_union([H | T], AvroDef, Acc, Found) ->
 %% type in avro, if any of the Erlang union member is a transform result, it
 %% would be impossible to resolve.
 assert_no_tx(#t{ref = []}) -> ok;
-assert_no_tx(T) -> throw({no_transform_allowed_in_ambiguous_union, T}).
+assert_no_tx(_) -> throw(no_transform_allowed_in_ambiguous_union).
 
 %%%_* Enocde JSON ==============================================================
 

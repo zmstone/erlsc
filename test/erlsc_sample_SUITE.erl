@@ -10,6 +10,7 @@
 
 -export([ t_units/1
         , t_basic_info/1
+        , t_bad_union/1
         ]).
 
 -include_lib("eunit/include/eunit.hrl").
@@ -23,9 +24,7 @@ all() ->
         end].
 
 init_per_suite(Config) ->
-  SpecFile = filename:join(code:priv_dir(erlsc), "sample.spec"),
-  Encoder = erlsc:compile({file, SpecFile}),
-  [{encoder, Encoder} | Config].
+  Config.
 
 end_per_suite(_Config) ->
   ok.
@@ -40,12 +39,21 @@ t_units(Config) when is_list(Config) ->
   ok.
 
 t_basic_info(Config) when is_list(Config) ->
-  Encoder   = config(encoder, Config),
+  SpecFile = filename:join(code:priv_dir(erlsc), "sample.spec"),
+  Encoder = erlsc:compile({file, SpecFile}),
   Root      = {erlsc_sample, record, person},
   Data      = erlsc_sample:random_guy(term),
   ExpJson   = erlsc_sample:random_guy(json),
   {_, Json} = Encoder(Root, Data, [json]),
   ?assertEqual(ExpJson, Json).
+
+t_bad_union(Config) when is_list(Config) ->
+  Specs = [ {roots, [{erlsc_bad_sample, record, bad_sample}]}
+          , {erlsc_file, "/tmp/erlsc/bad_sample.eterm"}
+          , {avsc, [{output_dir, "/tmp/avsc/avsc"}]}
+          ],
+  ?assertException(throw, {no_transform_allowed_in_ambiguous_union, _},
+                   erlsc:compile(Specs)).
 
 %%%_* Internals ================================================================
 

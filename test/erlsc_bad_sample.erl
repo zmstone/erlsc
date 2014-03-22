@@ -1,12 +1,10 @@
 
 -module(erlsc_bad_sample).
 
--export_type([ a/0
-             , b/0
-             ]).
+-type transform(_) :: string().
+-type bad_union() :: transform(term()) | integer().
 
--type a() :: {b(), integer()}.
--type b() :: a() | atom().
+-record(bad_sample, {field :: bad_union()}).
 
 %%%_* Emacs ====================================================================
 %%% Local Variables:
