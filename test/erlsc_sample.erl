@@ -91,8 +91,37 @@ random_guy(term) ->
          , circles    = nil
          , terms      = [whatever]
          };
+random_guy(json_structs) ->
+  { struct
+  , [ {<<"id">>, 42}
+    , {<<"name">>, {struct, [ {<<"FirstName">>,  <<"random">>}
+                            , {<<"MiddleName">>, null}
+                            , {<<"LastName">>,   <<"guy">>}]}}
+    , {<<"gender">>,<<"male">>}
+    , {<<"birthday">>, {struct, [ {<<"com.example.erlsc.date_0">>
+                                , {struct, [ {<<"Year">>,1970}
+                                           , {<<"Month">>,1}
+                                           , {<<"Day">>,1}]}}]}}
+    , {<<"email">>, {struct, [ {<<"string">>, <<"email@some.com">>}]}}
+    , {<<"sns_links">>, []}
+    , {<<"addresses">>, [ {struct, [ {<<"tags">>, [<<"residence">>,<<"billing">>]}
+                                   , {<<"street">>, <<"street 423">>}
+                                   , {<<"city">>, <<"stockholm">>}
+                                   , {<<"country">>, 46}
+                                   , {<<"zip">>, {struct,[{<<"long">>,16356}]}}]}
+                        , {struct, [ {<<"tags">>, [<<"shipping">>]}
+                                   , {<<"street">>, <<"street 424">>}
+                                   , {<<"city">>, <<"stockholm">>}
+                                   , {<<"country">>, 46}
+                                   , {<<"zip">>, null}]}]}
+    , {<<"phone_nums">>, [{struct, [ {<<"Tag">>, <<"home">>}
+                                   , {<<"Num">>, <<"123455">>}]}]}
+    , {<<"circles">>, null}
+    , {<<"terms">>, <<"[whatever]">>}
+    ]
+  };
 random_guy(json) ->
-  "".
+  iolist_to_binary(mochijson3:encode(random_guy(json_structs))).
 
 %%%_* Internals ================================================================
 

@@ -23,10 +23,11 @@ all() ->
         end].
 
 init_per_suite(Config) ->
-  Config.
+  SpecFile = filename:join(code:priv_dir(erlsc), "sample.spec"),
+  Encoder = erlsc:compile({file, SpecFile}),
+  [{encoder, Encoder} | Config].
 
 end_per_suite(_Config) ->
-  erlsc:stop(),
   ok.
 
 init_per_testcase(_Case, Config) -> Config.
@@ -34,13 +35,17 @@ init_per_testcase(_Case, Config) -> Config.
 end_per_testcase(_Case, _Config) -> ok.
 
 t_units(Config) when is_list(Config) ->
-	ok = erlsc_schemas:test(),
   ok = erlsc_types:test(),
   ok = erlsc_sample:test(),
   ok.
 
 t_basic_info(Config) when is_list(Config) ->
-  ok.
+  Encoder   = config(encoder, Config),
+  Root      = {erlsc_sample, record, person},
+  Data      = erlsc_sample:random_guy(term),
+  ExpJson   = erlsc_sample:random_guy(json),
+  {_, Json} = Encoder(Root, Data, [json]),
+  ?assertEqual(ExpJson, Json).
 
 %%%_* Internals ================================================================
 

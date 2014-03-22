@@ -535,7 +535,11 @@ record_type_test() ->
       , {subs, [ {id,       [{ref, {?SAMPLE, person_id, 0}}]}
                , {name,     [{ref, {?SAMPLE, name, 0}}]}
                , {gender,   [{ref, {?SAMPLE, gender, 0}}]}
-               , {birthday, [{ref, {erlsc, date, 0}}]}
+               , {birthday, [ {def, union}
+                            , {subs, [ {1, [{ref, {erlsc, date, 0}}]}
+                                     , {2, [{def, atom}, {args, null}]}
+                                     ]}
+                            ]}
                , {email, [ {def,  union}
                          , {subs, [ {1, [{ref, {?SAMPLE, null, 0}}]}
                                   , {2, [{def, string}]}
@@ -556,9 +560,9 @@ record_type_test() ->
       ]
     },
   Expected = from_proplist(KVL),
-  %io:format("~p\n", [Expected]),
+  %ct:pal("~p\n", [Expected]),
   Value = find(?SAMPLE, Root),
-  %io:format("~p\n", [Value]),
+  %ct:pal("~p\n", [Value]),
   ?EQ(Expected, Value).
 
 -endif. %%(EUNIT).
