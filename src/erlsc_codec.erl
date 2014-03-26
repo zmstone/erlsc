@@ -16,7 +16,6 @@
 -spec compile(specs()) -> cache().
 compile(Specs) ->
   AvscSpecs = erlsc_specs:get_avsc_specs(Specs),
-  Filename  = erlsc_specs:get_erlsc_file(Specs),
   Roots     = erlsc_specs:get_roots(Specs),
   ResCache  = compile(Roots,
                       _Modules = sets:new(),
@@ -25,9 +24,9 @@ compile(Specs) ->
                      ),
   Types     = erlsc_avro:avro_customize(ResCache),
   ok        = erlsc_avro:pp_schema(AvscSpecs, Types),
-  ok        = erlsc_types:write_to_file(Filename, Types),
   Namespace = keyfind(namespace, AvscSpecs, ""),
   Cache     = erlsc_cache:from_list(Types),
+  ok        = maybe_write_to_file(Specs, Types),
   encoder(Namespace, Cache).
 
 %% @doc Load compiled types from file.
@@ -42,6 +41,17 @@ load(Specs) ->
   encoder(Namespace, Cache).
 
 %%%_* Internals ================================================================
+
+%% @private Maybe write the compilation result to file to be loaded later.
+%% This enables schema dump/test in compile time and fast load in run time.
+-spec maybe_write_to_file(specs(), [type()]) -> ok.
+maybe_write_to_file(Specs, Types) ->
+  try
+    Filename = erlsc_specs:get_erlsc_file(Specs),
+    ok       = erlsc_types:write_to_file(Filename, Types)
+  catch throw : _ ->
+    ok
+  end.
 
 -spec encoder(namespace(), cache()) -> encoder().
 encoder(Ns, Cache) ->

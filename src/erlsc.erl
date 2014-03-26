@@ -61,6 +61,8 @@ compile(Specs) when is_list(Specs) ->
 
 %% @doc For the same purpose as compile/1 only the types are loaded from
 %% the file specified in input spec. See priv/sample.spec for example.
+%% This is to enable schema compilation in Erlang source code compile time
+%% and fast load in runtime.
 %% @end
 -spec load({file, filename()} | proplist()) -> encoder().
 load({file, SpecFile}) ->
