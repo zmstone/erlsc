@@ -41,7 +41,7 @@ To compile spec erlsc_sample:name/0 to avro schema:
 The avro schema file erlsc_sample.name_0.avsc in /tmp/sample-name/avsc/ is as below:
 ```
 {
-    "name": ".erlsc_sample.name_0",
+    "name": "erlsc_sample.name_0",
     "type": "record",
     "fields":
     [
