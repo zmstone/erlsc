@@ -368,6 +368,8 @@ infix([H | T], Sep) -> [H, Sep | infix(T, Sep)].
 
 %% @private Make new namespace.
 -spec ns(namespace(), type_id()) -> namespace().
+ns("", ID)        -> id_to_name(ID);
+ns(<<"">>, ID)    -> id_to_name(ID);
 ns(Namespace, ID) -> string:join([Namespace, id_to_name(ID)], ".").
 
 %% @private Get avro definition.
