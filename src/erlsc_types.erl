@@ -181,6 +181,8 @@ tree(Mod, {var, Line, '_'}) ->
   excep({Mod, Line}, "'any()' or '_' type is not supported");
 tree(Mod, {var, Line, _VarName}) ->
   excep({Mod, Line}, "variable type is not supported");
+tree(Mod, {type, Line, tuple, any}) ->
+  excep({Mod, Line}, "tuple() type is not supported");
 tree(Mod, {paren_type, _Line, [Type]}) ->
   tree(Mod, Type);
 tree(Mod, {ann_type, _Line1, [{var, _Line2, Name}, Type]}) ->
